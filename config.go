@@ -31,6 +31,7 @@ const defaultConfig = `
 		"virtualbox-ovf": "packer-builder-virtualbox-ovf",
 		"vmware-iso": "packer-builder-vmware-iso",
 		"vmware-vmx": "packer-builder-vmware-vmx",
+		"xen": "packer-builder-xen",
 		"null": "packer-builder-null"
 	},
 
