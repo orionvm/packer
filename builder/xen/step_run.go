@@ -7,6 +7,7 @@ import (
 	"log"
 	"path/filepath"
 	"strings"
+	"runtime"
 )
 
 // stepRun runs the virtual machine
@@ -58,37 +59,47 @@ func getCommandArgs(bootDrive string, state multistep.StateBag) ([]string, error
 	config := state.Get("config").(*config)
 	isoPath := state.Get("iso_path").(string)
 	vncPort := state.Get("vnc_port").(uint)
-	sshHostPort := state.Get("sshHostPort").(uint)
+	privateIp := state.Get("privateIp").(string)
 	ui := state.Get("ui").(packer.Ui)
 
-	guiArgument := "sdl"
-	vnc := fmt.Sprintf("0.0.0.0:%d", vncPort-5900)
+	sdlArgument := "1"
+	vncDisplay := fmt.Sprintf("%d", vncPort-5900)
 	vmName := config.VMName
 	imgPath := filepath.Join(config.OutputDir,
 		fmt.Sprintf("%s.%s", vmName, strings.ToLower(config.Format)))
+
+	cdrom := fmt.Sprintf("drive='file:%s,hdc:cdrom,r'", isoPath)
+	hdd := fmt.Sprintf("drive='file:%s,hda,w'", imgPath)
 
 	if config.Headless == true {
 		ui.Message("WARNING: The VM will be started in headless mode, as configured.\n" +
 			"In headless mode, errors during the boot sequence or OS setup\n" +
 			"won't be easily visible. Use at your own discretion.")
-		guiArgument = "none"
+		sdlArgument = "0"
 	}
 
 	defaultArgs := make(map[string]string)
-	defaultArgs["-name"] = vmName
-	defaultArgs["-display"] = guiArgument
-	defaultArgs["-netdev"] = "user,id=user.0"
-	defaultArgs["-device"] = fmt.Sprintf("%s,netdev=user.0", config.NetDevice)
-	defaultArgs["-drive"] = fmt.Sprintf("file=%s,if=%s", imgPath, config.DiskInterface)
-	defaultArgs["-cdrom"] = isoPath
-	defaultArgs["-boot"] = bootDrive
-	defaultArgs["-m"] = "512m"
-	defaultArgs["-redir"] = fmt.Sprintf("tcp:%v::22", sshHostPort)
-	defaultArgs["-vnc"] = vnc
+	defaultArgs["name"] = vmName
+	defaultArgs["sdl"] = sdlArgument
+	//defaultArgs["-netdev"] = "user,id=user.0"
+	//defaultArgs["-device"] = fmt.Sprintf("%s,netdev=user.0", config.NetDevice)
+	//defaultArgs["disk"] = disk
+	defaultArgs["memory"] = "512"
+	defaultArgs["vif"] = fmt.Sprintf("'script=vif-nat,ip=%s'", privateIp)
+	//defaultArgs["-redir"] = fmt.Sprintf("tcp:%v::22", sshHostPort)
+	defaultArgs["vnc"] = "1"
+	defaultArgs["vnclisten"] = "0.0.0.0"
+	defaultArgs["vncdisplay"] = vncDisplay
+	//defaultArgs["vncpassword"] = ""
+	defaultArgs["on_poweroff"] = "destroy"
+	defaultArgs["on_reboot"] = "restart"
+	defaultArgs["on_crash"] = "destroy"
+	defaultArgs["builder"] = "hvm"
+	defaultArgs["kernel"] = "/usr/lib/xen-4.1/boot/hvmloader"
 
 	// Determine if we have a floppy disk to attach
 	if floppyPathRaw, ok := state.GetOk("floppy_path"); ok {
-		defaultArgs["-fda"] = floppyPathRaw.(string)
+		defaultArgs["fda"] = floppyPathRaw.(string)
 	} else {
 		log.Println("Qemu Builder has no floppy files, not attaching a floppy.")
 	}
@@ -136,16 +147,24 @@ func getCommandArgs(bootDrive string, state multistep.StateBag) ([]string, error
 
 	// Flatten to array of strings
 	outArgs := make([]string, 0)
+
+	devnull := "/dev/null"
+	if runtime.GOOS == "windows"{
+		devnull = "NUL"
+	}
+
+	outArgs = append(outArgs, "create", devnull)
 	for key, values := range inArgs {
 		if len(values) > 0 {
 			for idx := range values {
-				outArgs = append(outArgs, key, values[idx])
+				outArgs = append(outArgs, fmt.Sprintf("%s=%s", key, values[idx]))
 			}
 		} else {
 			outArgs = append(outArgs, key)
 		}
 	}
-
+	outArgs = append(outArgs, "disk", hdd, "disk", cdrom)
+	ui.Say(strings.Join(outArgs, " "))
 	return outArgs, nil
 }
 
